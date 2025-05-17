@@ -9,56 +9,54 @@ class JSONSearchEngine:
         self.json_path = json_path
         self.vectorstore = None
         self.embeddings = OpenAIEmbeddings()
-        
-    def _create_content_string(self, item):
-        """Create a comprehensive searchable string from all fields"""
-        content_parts = [
-            f"Resource: {item.get('resourceName', '')}",
-            f"Role: {item.get('functionalTitle', '')}",
-            f"Division: {item.get('division', '')}",
-            f"Subdivision: {item.get('subDivisionPillarName', '')}",
-            f"Skills: {item.get('productFunctionArea', '')}",
-            f"Projects: {item.get('ppmProject', '')}",
-            f"Region: {item.get('region', '')}",
-            f"Manager: {item.get('supervisorName', '')}",
-            f"Email: {item.get('employeeEmailAddress', '')}",
-            f"Employee Type: {item.get('employeeType', '')}",
-            f"Service Band: {item.get('serviceBand', '')}"
-        ]
-        return "\n".join(content_parts)
+    
+    def _get_jq_schema(self):
+        """Generate the jq schema with all fields included"""
+        return r'''
+        .[] | {
+            id: .userId,
+            content: "Resource: \(.resourceName)
+Role: \(.functionalTitle)
+Division: \(.division)
+Subdivision: \(.subDivisionPillarName)
+Skills: \(.productFunctionArea)
+Projects: \(.ppmProject)
+Region: \(.region)
+Manager: \(.supervisorName)
+Email: \(.employeeEmailAddress)
+Employee Type: \(.employeeType)
+Service Band: \(.serviceBand)",
+            metadata: {
+                resourceName: .resourceName,
+                functionalTitle: .functionalTitle,
+                division: .division,
+                subDivision: .subDivisionPillarName,
+                productArea: .productFunctionArea,
+                manager: .supervisorName,
+                email: .employeeEmailAddress,
+                region: .region,
+                employeeType: .employeeType,
+                serviceBand: .serviceBand,
+                projects: .ppmProject,
+                costCode: .costCode,
+                corporateTitle: .corporateTitle
+            }
+        }
+        '''
 
     def load_data(self):
-    """Load and index the JSON data"""
-    # Create the jq_schema with proper string formatting
-    jq_schema = """.[] | {
-        id: .userId,
-        content: "%s",
-        metadata: {
-            resourceName: .resourceName,
-            functionalTitle: .functionalTitle,
-            division: .division,
-            subDivision: .subDivisionPillarName,
-            productArea: .productFunctionArea,
-            manager: .supervisorName,
-            email: .employeeEmailAddress,
-            region: .region,
-            employeeType: .employeeType,
-            serviceBand: .serviceBand,
-            projects: .ppmProject
-        }
-    }""" % self._create_content_string(.)
-    
-    loader = JSONLoader(
-        file_path=self.json_path,
-        jq_schema=jq_schema,
-        text_content=False
-    )
-    
-    docs = loader.load()
-    self.vectorstore = FAISS.from_documents(docs, self.embeddings)
+        """Load and index the JSON data"""
+        loader = JSONLoader(
+            file_path=self.json_path,
+            jq_schema=self._get_jq_schema(),
+            text_content=False
+        )
+        
+        docs = loader.load()
+        self.vectorstore = FAISS.from_documents(docs, self.embeddings)
         
     def search(self, query, k=5):
-        """Search across all fields with rich results"""
+        """Search across all fields"""
         if not self.vectorstore:
             self.load_data()
             
@@ -66,23 +64,12 @@ class JSONSearchEngine:
         
         formatted_results = []
         for doc in results:
-            result = {
+            formatted_results.append({
                 "content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": self._calculate_relevance(doc.page_content, query)
-            }
-            formatted_results.append(result)
+                "metadata": doc.metadata
+            })
             
-        # Sort by relevance score
-        formatted_results.sort(key=lambda x: x["score"], reverse=True)
-        
-        return formatted_results[:k]
-    
-    def _calculate_relevance(self, content, query):
-        """Simple relevance scoring"""
-        query = query.lower()
-        content = content.lower()
-        return sum(1 for word in query.split() if word in content)
+        return formatted_results
 
 # Usage Example
 if __name__ == "__main__":
