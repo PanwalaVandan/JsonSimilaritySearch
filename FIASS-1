@@ -11,39 +11,73 @@ class JSONSearchEngine:
         self.embeddings = OpenAIEmbeddings()
     
     def _get_jq_schema(self):
-        """Generate the jq schema with all fields included"""
-        return r'''
-        .[] | {
-            id: .userId,
-            content: "Resource: \(.resourceName)
+    return r'''
+    .[] | {
+        id: .userId,
+        content: "Resource: \(.resourceName)
 Role: \(.functionalTitle)
 Division: \(.division)
 Subdivision: \(.subDivisionPillarName)
+Pillar Head: \(.pillarHead)
 Skills: \(.productFunctionArea)
 Projects: \(.ppmProject)
 Region: \(.region)
-Manager: \(.supervisorName)
+Manager: \(.supervisorName) (\(.supervisorEmailAddress))
+Secondary Manager: \(.secondaryManagerName) (\(.secondaryManagerEmailAddress))
 Email: \(.employeeEmailAddress)
 Employee Type: \(.employeeType)
-Service Band: \(.serviceBand)",
-            metadata: {
-                resourceName: .resourceName,
-                functionalTitle: .functionalTitle,
-                division: .division,
-                subDivision: .subDivisionPillarName,
-                productArea: .productFunctionArea,
-                manager: .supervisorName,
-                email: .employeeEmailAddress,
-                region: .region,
-                employeeType: .employeeType,
-                serviceBand: .serviceBand,
-                projects: .ppmProject,
-                costCode: .costCode,
-                corporateTitle: .corporateTitle
-            }
+Service Band: \(.serviceBand)
+Corporate Title: \(.corporateTitle)
+Position ID: \(.positionId)
+Hire Date: \(.lastHireDate)
+Term Date: \(.termDate)
+Vendor Type: \(.vendorTypeMod)
+Provider: \(.provider)
+Month: \(.month)",
+        metadata: {
+            # Identification
+            hrId: .hrId,
+            userId: .userId,
+            resourceName: .resourceName,
+            positionId: .positionId,
+            jobCode: .jobCode,
+            
+            # Organizational
+            division: .division,
+            subDivision: .subDivisionPillarName,
+            pillarHead: .pillarHead,
+            productArea: .productFunctionArea,
+            
+            # Employment
+            employeeType: .employeeType,
+            serviceBand: .serviceBand,
+            corporateTitle: .corporateTitle,
+            lastHireDate: .lastHireDate,
+            termDate: .termDate,
+            
+            # Managerial
+            supervisorId: .supervisorId,
+            supervisorName: .supervisorName,
+            supervisorEmail: .supervisorEmailAddress,
+            secondaryManagerId: .secondaryManagerId,
+            secondaryManagerName: .secondaryManagerName,
+            secondaryManagerEmail: .secondaryManagerEmailAddress,
+            
+            # Project
+            ppmProject: .ppmProject,
+            costCode: .costCode,
+            region: .region,
+            
+            # Vendor
+            vendorTypeMod: .vendorTypeMod,
+            provider: .provider,
+            month: .month,
+            
+            # Contact
+            email: .employeeEmailAddress
         }
-        '''
-
+    }
+    '''
     def load_data(self):
         """Load and index the JSON data"""
         loader = JSONLoader(
