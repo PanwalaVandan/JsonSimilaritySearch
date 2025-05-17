@@ -1,0 +1,107 @@
+from langchain_community.document_loaders import JSONLoader
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+import json
+
+class JSONSearchEngine:
+    def __init__(self, json_path):
+        self.json_path = json_path
+        self.vectorstore = None
+        self.embeddings = OpenAIEmbeddings()
+        
+    def _create_content_string(self, item):
+        """Create a comprehensive searchable string from all fields"""
+        content_parts = [
+            f"Resource: {item.get('resourceName', '')}",
+            f"Role: {item.get('functionalTitle', '')}",
+            f"Division: {item.get('division', '')}",
+            f"Subdivision: {item.get('subDivisionPillarName', '')}",
+            f"Skills: {item.get('productFunctionArea', '')}",
+            f"Projects: {item.get('ppmProject', '')}",
+            f"Region: {item.get('region', '')}",
+            f"Manager: {item.get('supervisorName', '')}",
+            f"Email: {item.get('employeeEmailAddress', '')}",
+            f"Employee Type: {item.get('employeeType', '')}",
+            f"Service Band: {item.get('serviceBand', '')}"
+        ]
+        return "\n".join(content_parts)
+
+    def load_data(self):
+        """Load and index the JSON data"""
+        loader = JSONLoader(
+            file_path=self.json_path,
+            jq_schema='.[] | {{
+                id: .userId,
+                content: $content,
+                metadata: {{
+                    resourceName: .resourceName,
+                    functionalTitle: .functionalTitle,
+                    division: .division,
+                    subDivision: .subDivisionPillarName,
+                    productArea: .productFunctionArea,
+                    manager: .supervisorName,
+                    email: .employeeEmailAddress,
+                    region: .region,
+                    employeeType: .employeeType,
+                    serviceBand: .serviceBand,
+                    projects: .ppmProject
+                }}
+            }}' % {"content": self._create_content_string(.)},
+            text_content=False
+        )
+        
+        docs = loader.load()
+        self.vectorstore = FAISS.from_documents(docs, self.embeddings)
+        
+    def search(self, query, k=5):
+        """Search across all fields with rich results"""
+        if not self.vectorstore:
+            self.load_data()
+            
+        results = self.vectorstore.similarity_search(query, k=k)
+        
+        formatted_results = []
+        for doc in results:
+            result = {
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": self._calculate_relevance(doc.page_content, query)
+            }
+            formatted_results.append(result)
+            
+        # Sort by relevance score
+        formatted_results.sort(key=lambda x: x["score"], reverse=True)
+        
+        return formatted_results[:k]
+    
+    def _calculate_relevance(self, content, query):
+        """Simple relevance scoring"""
+        query = query.lower()
+        content = content.lower()
+        return sum(1 for word in query.split() if word in content)
+
+# Usage Example
+if __name__ == "__main__":
+    search_engine = JSONSearchEngine("your_data.json")
+    
+    # Example queries - will work with any field
+    queries = [
+        "Vandan Panwala",  # Name search
+        "Cloud engineers in EMEA",  # Role + region
+        "PPM Project X123",  # Project ID
+        "Manager John Doe",  # Manager search
+        "Contract employees",  # Employee type
+        "Service Band D"  # Specific band
+    ]
+    
+    for query in queries:
+        print(f"\nSearching for: {query}")
+        results = search_engine.search(query)
+        
+        for i, result in enumerate(results, 1):
+            print(f"\nResult {i}:")
+            print(result["content"])
+            print("Metadata:", json.dumps(result["metadata"], indent=2))
+            print(f"Relevance Score: {result['score']}")
+            print("-" * 50)
