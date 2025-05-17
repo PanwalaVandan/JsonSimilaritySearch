@@ -1,0 +1,199 @@
+import json
+from langchain_community.document_loaders import JSONLoader
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from langchain_core.prompts import PromptTemplate
+import torch
+
+class JSONSearchEngine:
+    def __init__(self, json_path):
+        self.json_path = json_path
+        self.vectorstore = None
+        self.embeddings = OpenAIEmbeddings()
+    
+    def _get_jq_schema(self):
+        return r'''
+        .[] | {
+            id: .userId,
+            content: "Resource: \(.resourceName)
+Role: \(.functionalTitle)
+Division: \(.division)
+Subdivision: \(.subDivisionPillarName)
+Pillar Head: \(.pillarHead)
+Skills: \(.productFunctionArea)
+Projects: \(.ppmProject)
+Region: \(.region)
+Manager: \(.supervisorName) (\(.supervisorEmailAddress))
+Secondary Manager: \(.secondaryManagerName) (\(.secondaryManagerEmailAddress))
+Email: \(.employeeEmailAddress)
+Employee Type: \(.employeeType)
+Service Band: \(.serviceBand)
+Corporate Title: \(.corporateTitle)
+Position ID: \(.positionId)
+Hire Date: \(.lastHireDate)
+Term Date: \(.termDate)
+Vendor Type: \(.vendorTypeMod)
+Provider: \(.provider)
+Month: \(.month)",
+            metadata: {
+                # Identification
+                hrId: .hrId,
+                userId: .userId,
+                resourceName: .resourceName,
+                positionId: .positionId,
+                jobCode: .jobCode,
+                
+                # Organizational
+                division: .division,
+                subDivision: .subDivisionPillarName,
+                pillarHead: .pillarHead,
+                productArea: .productFunctionArea,
+                
+                # Employment
+                employeeType: .employeeType,
+                serviceBand: .serviceBand,
+                corporateTitle: .corporateTitle,
+                lastHireDate: .lastHireDate,
+                termDate: .termDate,
+                
+                # Managerial
+                supervisorId: .supervisorId,
+                supervisorName: .supervisorName,
+                supervisorEmail: .supervisorEmailAddress,
+                secondaryManagerId: .secondaryManagerId,
+                secondaryManagerName: .secondaryManagerName,
+                secondaryManagerEmail: .secondaryManagerEmailAddress,
+                
+                # Project
+                ppmProject: .ppmProject,
+                costCode: .costCode,
+                region: .region,
+                
+                # Vendor
+                vendorTypeMod: .vendorTypeMod,
+                provider: .provider,
+                month: .month,
+                
+                # Contact
+                email: .employeeEmailAddress
+            }
+        }
+        '''
+    
+    def load_data(self):
+        loader = JSONLoader(
+            file_path=self.json_path,
+            jq_schema=self._get_jq_schema(),
+            text_content=False
+        )
+        docs = loader.load()
+        self.vectorstore = FAISS.from_documents(docs, self.embeddings)
+    
+    def search(self, query, k=5):
+        if not self.vectorstore:
+            self.load_data()
+        results = self.vectorstore.similarity_search(query, k=k)
+        return [{
+            "content": doc.page_content,
+            "metadata": doc.metadata
+        } for doc in results]
+
+class HRDataAnalyzer:
+    def __init__(self, json_path, model_name="TheBloke/Llama-2-7b-Chat-GGML"):
+        self.search_engine = JSONSearchEngine(json_path)
+        self.load_llm(model_name)
+        self.setup_prompt_template()
+    
+    def load_llm(self, model_name):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map="auto",
+            torch_dtype=torch.float16
+        )
+    
+    def setup_prompt_template(self):
+        self.prompt_template = PromptTemplate(
+            input_variables=["context", "question"],
+            template="""
+            [INST] <<SYS>>
+            You are an HR assistant analyzing employee data. Follow these rules:
+            1. Answer ONLY using the provided context
+            2. Be precise and factual
+            3. For lists, use bullet points
+            4. Include relevant metadata when available
+            <</SYS>>
+            
+            Context:
+            {context}
+            
+            Question: {question}
+            
+            Provide a detailed response: [/INST]
+            """
+        )
+    
+    def query(self, question, max_results=5, max_tokens=300):
+        # Step 1: Get relevant records
+        search_results = self.search_engine.search(question, k=max_results)
+        
+        # Step 2: Prepare context
+        context = "\n\n".join(
+            f"Record {i+1}:\n{res['content']}\nMetadata: {json.dumps(res['metadata'], indent=2)}"
+            for i, res in enumerate(search_results)
+        )
+        
+        # Step 3: Generate response
+        prompt = self.prompt_template.format(
+            context=context,
+            question=question
+        )
+        
+        inputs = self.tokenizer(prompt, return_tensors="pt").to("cuda")
+        outputs = self.model.generate(
+            **inputs,
+            max_new_tokens=max_tokens,
+            temperature=0.7,
+            do_sample=True
+        )
+        
+        # Clean and return response
+        full_response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return full_response.split("[/INST]")[-1].strip()
+    
+    def export_to_csv(self, question, filename="results.csv"):
+        results = self.search_engine.search(question, k=100)
+        if not results:
+            return "No results found"
+            
+        import csv
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=results[0]['metadata'].keys())
+            writer.writeheader()
+            for res in results:
+                writer.writerow(res['metadata'])
+        return f"Exported {len(results)} records to {filename}"
+
+# Example Usage
+if __name__ == "__main__":
+    # Initialize with your JSON data
+    analyzer = HRDataAnalyzer("employees.json")
+    
+    # Example queries
+    queries = [
+        "List all Associate Cloud Engineers in India",
+        "Show contractors working on Project Phoenix",
+        "Generate an org chart for the Technology division",
+        "Who are the employees with Python skills in the EMEA region?"
+    ]
+    
+    for query in queries:
+        print(f"\n\033[1mQuery:\033[0m {query}")
+        response = analyzer.query(query)
+        print(f"\033[1mResponse:\033[0m {response}")
+        
+        # Export results for the first query
+        if query == queries[0]:
+            export_result = analyzer.export_to_csv(query)
+            print(f"\n\033[1mExport:\033[0m {export_result}")
