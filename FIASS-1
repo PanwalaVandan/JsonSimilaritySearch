@@ -28,31 +28,34 @@ class JSONSearchEngine:
         return "\n".join(content_parts)
 
     def load_data(self):
-        """Load and index the JSON data"""
-        loader = JSONLoader(
-            file_path=self.json_path,
-            jq_schema='.[] | {{
-                id: .userId,
-                content: $content,
-                metadata: {{
-                    resourceName: .resourceName,
-                    functionalTitle: .functionalTitle,
-                    division: .division,
-                    subDivision: .subDivisionPillarName,
-                    productArea: .productFunctionArea,
-                    manager: .supervisorName,
-                    email: .employeeEmailAddress,
-                    region: .region,
-                    employeeType: .employeeType,
-                    serviceBand: .serviceBand,
-                    projects: .ppmProject
-                }}
-            }}' % {"content": self._create_content_string(.)},
-            text_content=False
-        )
-        
-        docs = loader.load()
-        self.vectorstore = FAISS.from_documents(docs, self.embeddings)
+    """Load and index the JSON data"""
+    # Create the jq_schema with proper string formatting
+    jq_schema = """.[] | {
+        id: .userId,
+        content: "%s",
+        metadata: {
+            resourceName: .resourceName,
+            functionalTitle: .functionalTitle,
+            division: .division,
+            subDivision: .subDivisionPillarName,
+            productArea: .productFunctionArea,
+            manager: .supervisorName,
+            email: .employeeEmailAddress,
+            region: .region,
+            employeeType: .employeeType,
+            serviceBand: .serviceBand,
+            projects: .ppmProject
+        }
+    }""" % self._create_content_string(.)
+    
+    loader = JSONLoader(
+        file_path=self.json_path,
+        jq_schema=jq_schema,
+        text_content=False
+    )
+    
+    docs = loader.load()
+    self.vectorstore = FAISS.from_documents(docs, self.embeddings)
         
     def search(self, query, k=5):
         """Search across all fields with rich results"""
