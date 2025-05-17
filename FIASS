@@ -1,0 +1,88 @@
+from langchain_community.document_loaders import JSONLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+import json
+
+# 1. Load and preprocess JSON data
+def load_and_process_json(file_path: str):
+    loader = JSONLoader(
+        file_path=file_path,
+        jq_schema='.[] | {
+            id: .userId,
+            content: "Employee: \(.resourceName)\\nRole: \(.functionalTitle)\\nDivision: \(.division)\\nSkills: \(.productFunctionArea)\\nManager: \(.supervisorName)\\nProjects: \(.ppmProject)",
+            metadata: {
+                division: .division,
+                subDivision: .subDivisionPillarName,
+                function: .productFunctionArea,
+                positionId: .positionId,
+                employeeType: .employeeType,
+                region: .region,
+                corporateTitle: .corporateTitle,
+                email: .employeeEmailAddress,
+                manager: .supervisorName,
+                managerEmail: .supervisorEmailAddress,
+                secondaryManager: .secondaryManagerName,
+                month: .month
+            }
+        }',
+        text_content=False
+    )
+    
+    data = loader.load()
+    
+    # Split documents if large (optional)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len,
+        is_separator_regex=False
+    )
+    docs = text_splitter.split_documents(data)
+    return docs
+
+# 2. Create and save vector store
+def create_vector_store(docs, save_path="faiss_index"):
+    embeddings = OpenAIEmbeddings()  # Requires OPENAI_API_KEY in environment
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    vectorstore.save_local(save_path)
+    return vectorstore
+
+# 3. Search function
+def search_similar_documents(query, vectorstore_path="faiss_index", k=5):
+    embeddings = OpenAIEmbeddings()
+    vectorstore = FAISS.load_local(vectorstore_path, embeddings)
+    results = vectorstore.similarity_search(query, k=k)
+    
+    # Format results nicely
+    formatted_results = []
+    for i, doc in enumerate(results, 1):
+        result = {
+            "rank": i,
+            "content": doc.page_content,
+            "metadata": doc.metadata
+        }
+        formatted_results.append(result)
+    
+    return formatted_results
+
+# Example usage
+if __name__ == "__main__":
+    # Step 1: Load and process your JSON file
+    json_file = "your_data.json"  # Replace with your file path
+    documents = load_and_process_json(json_file)
+    
+    # Step 2: Create vector store (only need to do this once)
+    create_vector_store(documents)
+    
+    # Step 3: Perform searches
+    query = "Find me cloud computing experts in the EMEA region"
+    results = search_similar_documents(query)
+    
+    # Print results
+    print(f"Results for query: '{query}'")
+    for result in results:
+        print(f"\nRank {result['rank']}:")
+        print(result["content"])
+        print("Metadata:", json.dumps(result["metadata"], indent=2))
